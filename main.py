@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from sqlalchemy.orm import Session
-from data_schemas import ProductRequest
+from data_schemas import ProductRequest,ProductResponse
 
 from sqlalchemy import create_engine,select,insert
 from models import Base,Product,User
@@ -31,20 +31,23 @@ def add_user():
     session.add(user)
     session.commit()
 
-add_user()
-
-
-@app.post("/products")
+@app.post("/products", response_model=ProductResponse)
 def create_product(prod: ProductRequest):
     # store in the database
-    new_product= Product(
+    dbprod = Product(
         user_id=prod.user_id,
         product_name=prod.product_name,
         buying_price=prod.buying_price,
         selling_price=prod.selling_price,
         stock_quantity=prod.stock_quantity)
 
-    session.add(new_product)
+    session.add(dbprod)
     session.commit()
+    return dbprod
 
-    return {"new_product":new_product}
+@app.get("/products", response_model=list[ProductResponse])
+def get_products():
+    query = select(Product)
+    products = session.scalars(query)
+
+    return products
