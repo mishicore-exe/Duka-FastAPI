@@ -14,3 +14,17 @@ class ProductResponse(BaseModel):
     buying_price : float
     selling_price : float
     stock_quantity : int
+
+class UserRequest(BaseModel):
+    full_name: str
+    email: str
+    password: str
+    phone_number: str
+
+class UserResponse(BaseModel):
+    id: int
+    full_name: str
+    email: str
+    password: str
+    phone_number: str
+    
