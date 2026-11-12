@@ -3,14 +3,11 @@ from sqlalchemy import String, Integer, Float, DateTime
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from datetime import datetime
 
-
 class Base(DeclarativeBase):
     pass
 
-
 class TimestampMixin:
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
-
 
 class User(Base):
     __tablename__ = "users"
@@ -20,7 +17,6 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
     password: Mapped[str] = mapped_column(String(200), nullable=False)
     phone_number: Mapped[str] = mapped_column(String(20))
-
 
 class Product(Base, TimestampMixin):
     __tablename__ = "products"
@@ -35,9 +31,9 @@ class Product(Base, TimestampMixin):
 class Sale(Base, TimestampMixin):
     __tablename__ = "sales"
 
-    id : Mapped[int]=mapped_column(Integer, primary_key=True)
-    user_id: Mapped[int]=mapped_column(ForeignKey("users.id"))
-    product_id: Mapped[int]=mapped_column(ForeignKey("products.id"))
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    product_id: Mapped[int] = mapped_column(ForeignKey("products.id"))
     quantity: Mapped[int] = mapped_column(Integer)
 
 class Sales_detail(Base):
@@ -48,7 +44,6 @@ class Sales_detail(Base):
     product_id: Mapped[int] = mapped_column(ForeignKey("products.id"))
     quantity: Mapped[int] = mapped_column(Integer)
 
-
 class Purchase(Base, TimestampMixin):
     __tablename__ = "purchases"
 
@@ -56,17 +51,14 @@ class Purchase(Base, TimestampMixin):
     product_id: Mapped[int] = mapped_column(ForeignKey("products.id"))
     purchase_price: Mapped[float] = mapped_column(Float)
 
-
 class Payment(Base, TimestampMixin):
     __tablename__ = "payments"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     sale_id: Mapped[int] = mapped_column(ForeignKey("sales.id"))
     amount_paid: Mapped[float] = mapped_column(Float)
-    transaction_code: Mapped[str] = mapped_column(String , nullable=True ,default=None)
+    transaction_code: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     mrid: Mapped[str] = mapped_column(String)
     crid: Mapped[str] = mapped_column(String)
-    payment_status: Mapped[str] = mapped_column(String , default="pending")
-    phone_number:  Mapped[str] = mapped_column(String(20))
-
-
+    payment_status: Mapped[str] = mapped_column(String, default="pending")
+    phone_number: Mapped[str] = mapped_column(String(20))
