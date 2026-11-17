@@ -51,6 +51,7 @@ def get_products():
     products = session.scalars(query)
     return products
 
+# fetching single product
 @app.get("/products/{product_id}", response_model=ProductResponse)
 def get_single_product(product_id):
     query = select(Product).where(Product.id == product_id)
@@ -63,6 +64,7 @@ def get_single_product(product_id):
         )
     return product
 
+# update product
 @app.put("/products/{product_id}", response_model= ProductResponse)
 def update_product(product_id : int , prod : ProductRequest):
     query = select(Product).where(Product.id == product_id)
@@ -80,7 +82,6 @@ def update_product(product_id : int , prod : ProductRequest):
 
     session.commit()
     return product
-
 
 # End Product routes
 
@@ -103,6 +104,36 @@ def get_sale():
     sales = session.scalars(query)
     return sales
 
+# update sale
+@app.put("/sales/{sale_id}", response_model= SaleResponse)
+def update_sale(sale_id : int , sal : SaleRequest):
+    query = select(Sale).where(Sale.id == sale_id)
+    sale = session.scalars(query).first()
+
+    if sale is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Sale not found"
+            )
+    sale.user_id= sal.user_id
+    sale.product_id = sal.product_id
+    sale.quantity = sal.quantity
+    
+    session.commit()
+    return sale
+
+# fetch single sale
+@app.get("/sales/{sale_id}", response_model=SaleResponse)
+def get_single_sale(sale_id):
+    query = select(Sale).where(Sale.id == sale_id)
+    sale = session.scalars(query).first()
+    
+    if sale is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Sale not found"
+        )
+    return sale
 # End Sales routes
 
 # Sales_detail routes
@@ -124,6 +155,37 @@ def get_sales_detail():
     sales_d = session.scalars(query)
     return sales_d
 
+# update sale_detail
+@app.put("/sales_detail/{SalesDetail_id}", response_model= Sales_detailResponse)
+def update_SalesDetail(sale_detail_id : int , sale_d : Sales_detailRequest):
+    query = select(Sales_detail).where(Sales_detail.id == sale_detail_id)
+    sales_detail = session.scalars(query).first()
+
+    if sales_detail is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Sales detail not found"
+            )
+    sales_detail.sale_id= sale_d.sale_id
+    sales_detail.product_id = sale_d.product_id
+    sales_detail.quantity = sale_d.quantity
+    
+    session.commit()
+    return sales_detail
+
+# fetch single sale_detail
+@app.get("/sales_detail/{SalesDetail_id}", response_model=Sales_detailResponse)
+def get_single_SaleDetail(SalesDetail_id: int):
+    query = select(Sales_detail).where(Sales_detail.id == SalesDetail_id)
+    sale_d = session.scalars(query).first()
+
+    if sale_d is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Sales detail not found"
+        )
+    return sale_d
+
 # End Sales_details routes
 
 # Purchase routes
@@ -143,6 +205,36 @@ def get_purchase():
     query = select(Purchase)
     purchases = session.scalars(query)
     return purchases
+
+# update purchase
+@app.put("/purchases/{purchase_id}", response_model= PurchaseResponse)
+def update_purchase(purchase_id : int , pur : PurchaseRequest):
+    query = select(Purchase).where(Purchase.id == purchase_id)
+    purchase = session.scalars(query).first()
+
+    if purchase is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Purchase not found"
+            )
+    purchase.product_id= pur.product_id
+    purchase.purchase_price= pur.purchase_price
+    
+    session.commit()
+    return purchase
+
+# fetch single purchase
+@app.get("/purchase/{purchase_id}", response_model=PurchaseResponse)
+def get_single_purchase(purchase_id):
+    query = select(Purchase).where(Purchase.id == purchase_id)
+    purchase = session.scalars(query).first()
+    
+    if purchase is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Purchase not found"
+        )
+    return purchase
 
 # End Purchase routes
 
@@ -168,5 +260,40 @@ def get_payments():
     query = select(Payment)
     payments = session.scalars(query)
     return payments
+
+# update payments
+@app.put("/payments/{payment_id}", response_model= PaymentResponse)
+def update_payment(payment_id : int , pay : PaymentRequest):
+    query = select(Payment).where(Payment.id == payment_id)
+    payment = session.scalars(query).first()
+
+    if payment is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Payment not found"
+            )
+    payment.sale_id= pay.sale_id
+    payment.amount_paid= pay.amount_paid
+    payment.transaction_code= pay.transaction_code
+    payment.mrid= pay.mrid
+    payment.crid= pay.crid
+    payment.payment_status= pay.payment_status
+    payment.phone_number= pay.phone_number
+    
+    session.commit()
+    return payment
+
+# fetch single payment
+@app.get("/payment/{payment_id}", response_model=PaymentResponse)
+def get_single_payment(payment_id):
+    query = select(Payment).where(Payment.id == payment_id)
+    payment = session.scalars(query).first()
+    
+    if payment is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Payment not found"
+        )
+    return payment
 
 # End payments routes
