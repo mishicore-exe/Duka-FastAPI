@@ -1,8 +1,9 @@
-from fastapi import FastAPI,HTTPException
+from fastapi import FastAPI,HTTPException,status,Depends
 from sqlalchemy.orm import Session
-from data_schemas import ProductRequest,ProductResponse,SaleRequest,SaleResponse,Sales_detailRequest,Sales_detailResponse,PurchaseRequest,PurchaseResponse,PaymentResponse,PaymentRequest
+from data_schemas import ProductRequest,ProductResponse,SaleRequest,SaleResponse,Sales_detailRequest,Sales_detailResponse,PurchaseRequest,PurchaseResponse,PaymentResponse,PaymentRequest,LoginRequest,LoginResponse,RegisterRequest,RegisterResponse
 from sqlalchemy import create_engine,select
 from models import Base,Product,User,Sale,Sales_detail,Purchase,Payment
+from myjwt import verify_password,create_access_token,get_password_hash,get_current_user
 
 app = FastAPI()
 
@@ -19,21 +20,61 @@ session = Session(engine)
 def home():
     return {"Duka FastAPI Version": "1.0"}
 
-def add_user():
-    user = User(
-        full_name="Mishi Wanjohi",
-        email="mishi@gmail.com",
-        password="hgyt123",
-        phone_number="0712345678"
+# authentication routes
+@app.post("/login",response_model=LoginResponse)
+def login(user:LoginRequest):
+
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
     )
-    session.add(user)
+    
+    query = select(User).where(User.email == user.email)
+    db_user = session.scalars(query).first()
+
+    if not db_user:
+       raise credentials_exception
+    
+    if not verify_password(user.password, db_user.password):
+        raise credentials_exception
+
+    db_user.token=create_access_token({"sub": db_user.email})
+    return db_user
+
+@app.post("/register",response_model=RegisterResponse)
+def register(user:RegisterRequest):
+
+    credentials_exception = HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    query = select(User).where(User.email == user.email)
+    db_user = session.scalars(query).first()
+
+    if db_user:
+        raise HTTPException( 
+            status_code=400,
+            detail="Email already registered"
+        )
+
+    db_user=User(full_name= user.full_name,
+            email= user.email,
+            phone_number= user.phone_number,
+            password= get_password_hash(user.password)
+            )
+    session.add(db_user)
     session.commit()
-    return user
+
+    db_user.token=create_access_token({"sub": db_user.email})
+    return db_user
 
 # Product routes
 
 @app.post("/products", response_model=ProductResponse)
-def create_product(prod: ProductRequest):
+def create_product(prod: ProductRequest, current_user: str=Depends(get_current_user)):
     dbprod = Product(
         user_id=prod.user_id,
         product_name=prod.product_name,
@@ -46,7 +87,8 @@ def create_product(prod: ProductRequest):
     return dbprod
 
 @app.get("/products", response_model=list[ProductResponse])
-def get_products():
+def get_products(current_user: str=Depends(get_current_user)):
+    print("-----------------------------------user is-----------------------------",current_user)
     query = select(Product)
     products = session.scalars(query)
     return products
@@ -88,7 +130,7 @@ def update_product(product_id : int , prod : ProductRequest):
 # Sales routes
 
 @app.post("/sales", response_model=SaleResponse)
-def create_sale(sale: SaleRequest):
+def create_sale(sale: SaleRequest, current_user: str=Depends(get_current_user)):
     dbsale = Sale(
         user_id=sale.user_id,
         product_id=sale.product_id,
@@ -99,7 +141,7 @@ def create_sale(sale: SaleRequest):
     return dbsale
 
 @app.get("/sales", response_model=list[SaleResponse])
-def get_sale():
+def get_sale(current_user: str=Depends(get_current_user)):
     query = select(Sale)
     sales = session.scalars(query)
     return sales
@@ -139,7 +181,7 @@ def get_single_sale(sale_id):
 # Sales_detail routes
 
 @app.post("/sales_detail", response_model=Sales_detailResponse)
-def create_sale_detail(sale_detail: Sales_detailRequest):
+def create_sale_detail(sale_detail: Sales_detailRequest, current_user: str=Depends(get_current_user)):
     dbsale_d = Sales_detail(
         sale_id=sale_detail.sale_id,
         product_id=sale_detail.product_id,
@@ -150,7 +192,7 @@ def create_sale_detail(sale_detail: Sales_detailRequest):
     return dbsale_d
 
 @app.get("/sales_detail", response_model=list[Sales_detailResponse])
-def get_sales_detail():
+def get_sales_detail(current_user: str=Depends(get_current_user)):
     query = select(Sales_detail)
     sales_d = session.scalars(query)
     return sales_d
@@ -191,7 +233,7 @@ def get_single_SaleDetail(SalesDetail_id: int):
 # Purchase routes
 
 @app.post("/purchases", response_model=PurchaseResponse)
-def create_purchase(purchase: PurchaseRequest):
+def create_purchase(purchase: PurchaseRequest, current_user: str=Depends(get_current_user)):
     dbpurchase = Purchase(
         product_id=purchase.product_id,
         purchase_price=purchase.purchase_price
@@ -201,7 +243,7 @@ def create_purchase(purchase: PurchaseRequest):
     return dbpurchase
 
 @app.get("/purchases", response_model=list[PurchaseResponse])
-def get_purchase():
+def get_purchase(current_user: str=Depends(get_current_user)):
     query = select(Purchase)
     purchases = session.scalars(query)
     return purchases
@@ -241,7 +283,7 @@ def get_single_purchase(purchase_id):
 # Payments routes
 
 @app.post("/payments", response_model=PaymentResponse)
-def create_payment(payment: PaymentRequest):
+def create_payment(payment: PaymentRequest, current_user: str=Depends(get_current_user)):
     dbpayment = Payment(
         sale_id=payment.sale_id,
         amount_paid=payment.amount_paid,
@@ -256,7 +298,7 @@ def create_payment(payment: PaymentRequest):
     return dbpayment
 
 @app.get("/payments", response_model=list[PaymentResponse])
-def get_payments():
+def get_payments(current_user: str=Depends(get_current_user)):
     query = select(Payment)
     payments = session.scalars(query)
     return payments

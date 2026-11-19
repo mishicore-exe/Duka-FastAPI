@@ -15,18 +15,30 @@ class ProductResponse(BaseModel):
     selling_price : float
     stock_quantity : int
 
-class UserRequest(BaseModel):
+class RegisterRequest(BaseModel):
     full_name: str
     email: str
     password: str
     phone_number: str
 
-class UserResponse(BaseModel):
+class RegisterResponse(BaseModel):
     id: int
     full_name: str
     email: str
     password: str
     phone_number: str
+    token: str
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+class LoginResponse(BaseModel):
+    id: int
+    email: str
+    full_name: str
+    phone_number: str
+    token: str
 
 class SaleRequest(BaseModel):
     user_id : int
