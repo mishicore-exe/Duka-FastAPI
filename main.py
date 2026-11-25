@@ -1,289 +1,400 @@
-from fastapi import FastAPI,HTTPException,status,Depends
+from fastapi import FastAPI, HTTPException, status, Depends
 from sqlalchemy.orm import Session
-from data_schemas import ProductRequest,ProductResponse,SaleRequest,SaleResponse,Sales_detailRequest,Sales_detailResponse,PurchaseRequest,PurchaseResponse,PaymentResponse,PaymentRequest,LoginRequest,LoginResponse,RegisterRequest,RegisterResponse
-from sqlalchemy import create_engine,select
-from models import Base,Product,User,Sale,Sales_detail,Purchase,Payment
-from myjwt import verify_password,create_access_token,get_password_hash,get_current_user
+from sqlalchemy import create_engine, select
+from fastapi.middleware.cors import CORSMiddleware
+
+from data_schemas import (
+    ProductRequest, ProductResponse,
+    SaleRequest, SaleResponse,
+    Sales_detailRequest, Sales_detailResponse,
+    PurchaseRequest, PurchaseResponse,
+    PaymentRequest, PaymentResponse,
+    LoginRequest, LoginResponse,
+    RegisterRequest, RegisterResponse,
+    STKPushRequest
+)
+
+from models import Base, Product, User, Sale, Sales_detail, Purchase, Payment
+from myjwt import verify_password, create_access_token, get_password_hash, get_current_user
+from mpesa import make_stk_push
+from generate_receipts import create_pdf
 
 app = FastAPI()
 
-# Create a database using sqlalchemy engine
-engine = create_engine("sqlite:///./duka-fastapi.db", echo=True)
+origins = [
+    "http://localhost",
+    "http://localhost:5500",
+    "http://127.0.0.1:5500"
+]
 
-# Create tables into the database using sqlalchemy
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"]
+)
+
+engine = create_engine(
+    "sqlite:///./duka-fastapi.db",
+    connect_args={"check_same_thread": False}
+)
+
 Base.metadata.create_all(engine)
 
-# Create a session to do SQL transactions
-session = Session(engine)
+def get_db():
+    db = Session(engine)
+    try:
+        yield db
+    finally:
+        db.close()
+
+def get_user(db: Session, email: str):
+    return db.scalars(
+        select(User).where(User.email == email)
+    ).first()
 
 @app.get("/")
 def home():
     return {"Duka FastAPI Version": "1.0"}
 
-# authentication routes
-@app.post("/login",response_model=LoginResponse)
-def login(user:LoginRequest):
+# Authentication routes
 
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
-    
-    query = select(User).where(User.email == user.email)
-    db_user = session.scalars(query).first()
-
-    if not db_user:
-       raise credentials_exception
-    
-    if not verify_password(user.password, db_user.password):
-        raise credentials_exception
-
-    db_user.token=create_access_token({"sub": db_user.email})
-    return db_user
-
-@app.post("/register",response_model=RegisterResponse)
-def register(user:RegisterRequest):
-
-    credentials_exception = HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Could not validate credentials",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    query = select(User).where(User.email == user.email)
-    db_user = session.scalars(query).first()
+@app.post("/register", response_model=RegisterResponse)
+def register(user: RegisterRequest, db: Session = Depends(get_db)):
+    db_user = get_user(db, user.email)
 
     if db_user:
-        raise HTTPException( 
+        raise HTTPException(
             status_code=400,
             detail="Email already registered"
         )
 
-    db_user=User(full_name= user.full_name,
-            email= user.email,
-            phone_number= user.phone_number,
-            password= get_password_hash(user.password)
-            )
-    session.add(db_user)
-    session.commit()
+    db_user = User(
+        full_name=user.full_name,
+        email=user.email,
+        phone_number=user.phone_number,
+        password=get_password_hash(user.password)
+    )
 
-    db_user.token=create_access_token({"sub": db_user.email})
+    db.add(db_user)
+    db.commit()
+    db.refresh(db_user)
+
+    db_user.token = create_access_token({"sub": db_user.email})
+
+    return db_user
+
+@app.post("/login", response_model=LoginResponse)
+def login(user: LoginRequest, db: Session = Depends(get_db)):
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"}
+    )
+
+    db_user = get_user(db, user.email)
+
+    if not db_user:
+        raise credentials_exception
+
+    if not verify_password(user.password, db_user.password):
+        raise credentials_exception
+
+    db_user.token = create_access_token({"sub": db_user.email})
+
     return db_user
 
 # Product routes
 
 @app.post("/products", response_model=ProductResponse)
-def create_product(prod: ProductRequest, current_user: str=Depends(get_current_user)):
+def create_product(
+    prod: ProductRequest,
+    current_user: str = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    user = get_user(db, current_user)
+
     dbprod = Product(
-        user_id=prod.user_id,
+        user_id=user.id,
         product_name=prod.product_name,
         buying_price=prod.buying_price,
         selling_price=prod.selling_price,
         stock_quantity=prod.stock_quantity
     )
-    session.add(dbprod)
-    session.commit()
+
+    db.add(dbprod)
+    db.commit()
+    db.refresh(dbprod)
+
     return dbprod
 
 @app.get("/products", response_model=list[ProductResponse])
-def get_products(current_user: str=Depends(get_current_user)):
-    print("-----------------------------------user is-----------------------------",current_user)
-    query = select(Product)
-    products = session.scalars(query)
+def get_products(
+    current_user: str = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    user = get_user(db, current_user)
+
+    products = db.scalars(
+        select(Product).where(Product.user_id == user.id)
+    ).all()
+
     return products
 
-# fetching single product
 @app.get("/products/{product_id}", response_model=ProductResponse)
-def get_single_product(product_id):
-    query = select(Product).where(Product.id == product_id)
-    product = session.scalars(query).first()
-    
-    if product is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Product not found"
+def get_single_product(
+    product_id: int,
+    current_user: str = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    user = get_user(db, current_user)
+
+    product = db.scalars(
+        select(Product).where(
+            Product.id == product_id,
+            Product.user_id == user.id
         )
+    ).first()
+
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+
     return product
 
-# update product
-@app.put("/products/{product_id}", response_model= ProductResponse)
-def update_product(product_id : int , prod : ProductRequest):
-    query = select(Product).where(Product.id == product_id)
-    product = session.scalars(query).first()
+@app.put("/products/{product_id}", response_model=ProductResponse)
+def update_product(
+    product_id: int,
+    prod: ProductRequest,
+    current_user: str = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    user = get_user(db, current_user)
 
-    if product is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Product not found"
+    product = db.scalars(
+        select(Product).where(
+            Product.id == product_id,
+            Product.user_id == user.id
         )
+    ).first()
+
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+
     product.product_name = prod.product_name
     product.buying_price = prod.buying_price
     product.selling_price = prod.selling_price
     product.stock_quantity = prod.stock_quantity
 
-    session.commit()
-    return product
+    db.commit()
+    db.refresh(product)
 
-# End Product routes
+    return product
 
 # Sales routes
 
 @app.post("/sales", response_model=SaleResponse)
-def create_sale(sale: SaleRequest, current_user: str=Depends(get_current_user)):
-    dbsale = Sale(
-        user_id=sale.user_id,
-        product_id=sale.product_id,
-        quantity=sale.quantity
-    )
-    session.add(dbsale)
-    session.commit()
-    return dbsale
+def create_sale(
+    sale: SaleRequest,
+    current_user: str = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    user = get_user(db, current_user)
 
-@app.get("/sales", response_model=list[SaleResponse])
-def get_sale(current_user: str=Depends(get_current_user)):
-    query = select(Sale)
-    sales = session.scalars(query)
-    return sales
+    product = db.scalars(
+        select(Product).where(
+            Product.id == sale.product_id,
+            Product.user_id == user.id
+        )
+    ).first()
 
-# update sale
-@app.put("/sales/{sale_id}", response_model= SaleResponse)
-def update_sale(sale_id : int , sal : SaleRequest):
-    query = select(Sale).where(Sale.id == sale_id)
-    sale = session.scalars(query).first()
-
-    if sale is None:
-            raise HTTPException(
-                status_code=404,
-                detail="Sale not found"
-            )
-    sale.user_id= sal.user_id
-    sale.product_id = sal.product_id
-    sale.quantity = sal.quantity
-    
-    session.commit()
-    return sale
-
-# fetch single sale
-@app.get("/sales/{sale_id}", response_model=SaleResponse)
-def get_single_sale(sale_id):
-    query = select(Sale).where(Sale.id == sale_id)
-    sale = session.scalars(query).first()
-    
-    if sale is None:
+    if not product:
         raise HTTPException(
             status_code=404,
-            detail="Sale not found"
+            detail="Product not found"
         )
-    return sale
-# End Sales routes
 
-# Sales_detail routes
+    if sale.quantity <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Quantity must be greater than zero"
+        )
+
+    if product.stock_quantity < sale.quantity:
+        raise HTTPException(
+            status_code=400,
+            detail="Insufficient stock"
+        )
+
+    try:
+        dbsale = Sale(
+            user_id=user.id,
+            product_id=sale.product_id,
+            quantity=sale.quantity
+        )
+
+        product.stock_quantity -= sale.quantity
+
+        db.add(dbsale)
+        db.commit()
+        db.refresh(dbsale)
+
+        return dbsale
+
+    except Exception as e:
+        db.rollback()
+        print("SALE ERROR:", str(e))
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to create sale"
+        )
+
+@app.get("/sales", response_model=list[SaleResponse])
+def get_sale(
+    current_user: str = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    user = get_user(db, current_user)
+
+    sales = db.scalars(
+        select(Sale).where(Sale.user_id == user.id)
+    ).all()
+
+    return sales
+
+@app.get("/sales/{sale_id}", response_model=SaleResponse)
+def get_single_sale(
+    sale_id: int,
+    current_user: str = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    user = get_user(db, current_user)
+
+    sale = db.scalars(
+        select(Sale).where(
+            Sale.id == sale_id,
+            Sale.user_id == user.id
+        )
+    ).first()
+
+    if not sale:
+        raise HTTPException(status_code=404, detail="Sale not found")
+
+    return sale
+
+# Sales detail routes
 
 @app.post("/sales_detail", response_model=Sales_detailResponse)
-def create_sale_detail(sale_detail: Sales_detailRequest, current_user: str=Depends(get_current_user)):
+def create_sale_detail(
+    sale_detail: Sales_detailRequest,
+    current_user: str = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    user = get_user(db, current_user)
+
+    sale = db.scalars(
+        select(Sale).where(
+            Sale.id == sale_detail.sale_id,
+            Sale.user_id == user.id
+        )
+    ).first()
+
+    if not sale:
+        raise HTTPException(status_code=404, detail="Sale not found")
+
     dbsale_d = Sales_detail(
         sale_id=sale_detail.sale_id,
         product_id=sale_detail.product_id,
         quantity=sale_detail.quantity
     )
-    session.add(dbsale_d)
-    session.commit()
+
+    db.add(dbsale_d)
+    db.commit()
+    db.refresh(dbsale_d)
+
     return dbsale_d
 
 @app.get("/sales_detail", response_model=list[Sales_detailResponse])
-def get_sales_detail(current_user: str=Depends(get_current_user)):
-    query = select(Sales_detail)
-    sales_d = session.scalars(query)
+def get_sales_detail(
+    current_user: str = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    user = get_user(db, current_user)
+
+    sales_d = db.scalars(
+        select(Sales_detail)
+        .join(Sale, Sales_detail.sale_id == Sale.id)
+        .where(Sale.user_id == user.id)
+    ).all()
+
     return sales_d
-
-# update sale_detail
-@app.put("/sales_detail/{SalesDetail_id}", response_model= Sales_detailResponse)
-def update_SalesDetail(sale_detail_id : int , sale_d : Sales_detailRequest):
-    query = select(Sales_detail).where(Sales_detail.id == sale_detail_id)
-    sales_detail = session.scalars(query).first()
-
-    if sales_detail is None:
-            raise HTTPException(
-                status_code=404,
-                detail="Sales detail not found"
-            )
-    sales_detail.sale_id= sale_d.sale_id
-    sales_detail.product_id = sale_d.product_id
-    sales_detail.quantity = sale_d.quantity
-    
-    session.commit()
-    return sales_detail
-
-# fetch single sale_detail
-@app.get("/sales_detail/{SalesDetail_id}", response_model=Sales_detailResponse)
-def get_single_SaleDetail(SalesDetail_id: int):
-    query = select(Sales_detail).where(Sales_detail.id == SalesDetail_id)
-    sale_d = session.scalars(query).first()
-
-    if sale_d is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Sales detail not found"
-        )
-    return sale_d
-
-# End Sales_details routes
 
 # Purchase routes
 
 @app.post("/purchases", response_model=PurchaseResponse)
-def create_purchase(purchase: PurchaseRequest, current_user: str=Depends(get_current_user)):
+def create_purchase(
+    purchase: PurchaseRequest,
+    current_user: str = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    user = get_user(db, current_user)
+
+    product = db.scalars(
+        select(Product).where(
+            Product.id == purchase.product_id,
+            Product.user_id == user.id
+        )
+    ).first()
+
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+
     dbpurchase = Purchase(
         product_id=purchase.product_id,
         purchase_price=purchase.purchase_price
     )
-    session.add(dbpurchase)
-    session.commit()
+
+    db.add(dbpurchase)
+    db.commit()
+    db.refresh(dbpurchase)
+
     return dbpurchase
 
 @app.get("/purchases", response_model=list[PurchaseResponse])
-def get_purchase(current_user: str=Depends(get_current_user)):
-    query = select(Purchase)
-    purchases = session.scalars(query)
+def get_purchase(
+    current_user: str = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    user = get_user(db, current_user)
+
+    purchases = db.scalars(
+        select(Purchase)
+        .join(Product, Purchase.product_id == Product.id)
+        .where(Product.user_id == user.id)
+    ).all()
+
     return purchases
-
-# update purchase
-@app.put("/purchases/{purchase_id}", response_model= PurchaseResponse)
-def update_purchase(purchase_id : int , pur : PurchaseRequest):
-    query = select(Purchase).where(Purchase.id == purchase_id)
-    purchase = session.scalars(query).first()
-
-    if purchase is None:
-            raise HTTPException(
-                status_code=404,
-                detail="Purchase not found"
-            )
-    purchase.product_id= pur.product_id
-    purchase.purchase_price= pur.purchase_price
-    
-    session.commit()
-    return purchase
-
-# fetch single purchase
-@app.get("/purchase/{purchase_id}", response_model=PurchaseResponse)
-def get_single_purchase(purchase_id):
-    query = select(Purchase).where(Purchase.id == purchase_id)
-    purchase = session.scalars(query).first()
-    
-    if purchase is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Purchase not found"
-        )
-    return purchase
-
-# End Purchase routes
 
 # Payments routes
 
 @app.post("/payments", response_model=PaymentResponse)
-def create_payment(payment: PaymentRequest, current_user: str=Depends(get_current_user)):
+def create_payment(
+    payment: PaymentRequest,
+    current_user: str = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    user = get_user(db, current_user)
+
+    sale = db.scalars(
+        select(Sale).where(
+            Sale.id == payment.sale_id,
+            Sale.user_id == user.id
+        )
+    ).first()
+
+    if not sale:
+        raise HTTPException(status_code=404, detail="Sale not found")
+
     dbpayment = Payment(
         sale_id=payment.sale_id,
         amount_paid=payment.amount_paid,
@@ -293,49 +404,239 @@ def create_payment(payment: PaymentRequest, current_user: str=Depends(get_curren
         payment_status=payment.payment_status,
         phone_number=payment.phone_number
     )
-    session.add(dbpayment)
-    session.commit()
+
+    db.add(dbpayment)
+    db.commit()
+    db.refresh(dbpayment)
+
     return dbpayment
 
 @app.get("/payments", response_model=list[PaymentResponse])
-def get_payments(current_user: str=Depends(get_current_user)):
-    query = select(Payment)
-    payments = session.scalars(query)
+def get_payments(
+    current_user: str = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    user = get_user(db, current_user)
+
+    payments = db.scalars(
+        select(Payment)
+        .join(Sale, Payment.sale_id == Sale.id)
+        .where(Sale.user_id == user.id)
+    ).all()
+
     return payments
 
-# update payments
-@app.put("/payments/{payment_id}", response_model= PaymentResponse)
-def update_payment(payment_id : int , pay : PaymentRequest):
-    query = select(Payment).where(Payment.id == payment_id)
-    payment = session.scalars(query).first()
+@app.get("/payment/{payment_id}", response_model=PaymentResponse)
+def get_single_payment(
+    payment_id: int,
+    current_user: str = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    user = get_user(db, current_user)
 
-    if payment is None:
+    payment = db.scalars(
+        select(Payment)
+        .join(Sale, Payment.sale_id == Sale.id)
+        .where(
+            Payment.id == payment_id,
+            Sale.user_id == user.id
+        )
+    ).first()
+
+    if not payment:
+        raise HTTPException(status_code=404, detail="Payment not found")
+
+    return payment
+
+# M-Pesa STK Push route
+
+@app.post("/stk_push")
+def stk_push(
+    payload: STKPushRequest,
+    current_user: str = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    try:
+        user = get_user(db, current_user)
+
+        sale = db.scalars(
+            select(Sale).where(
+                Sale.id == payload.sale_id,
+                Sale.user_id == user.id
+            )
+        ).first()
+
+        if not sale:
             raise HTTPException(
                 status_code=404,
-                detail="Payment not found"
+                detail="Sale not found"
             )
-    payment.sale_id= pay.sale_id
-    payment.amount_paid= pay.amount_paid
-    payment.transaction_code= pay.transaction_code
-    payment.mrid= pay.mrid
-    payment.crid= pay.crid
-    payment.payment_status= pay.payment_status
-    payment.phone_number= pay.phone_number
-    
-    session.commit()
-    return payment
 
-# fetch single payment
-@app.get("/payment/{payment_id}", response_model=PaymentResponse)
-def get_single_payment(payment_id):
-    query = select(Payment).where(Payment.id == payment_id)
-    payment = session.scalars(query).first()
-    
-    if payment is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Payment not found"
+        product = db.get(Product, sale.product_id)
+
+        if not product:
+            raise HTTPException(
+                status_code=404,
+                detail="Product not found"
+            )
+
+        amount = product.selling_price * sale.quantity
+
+        response = make_stk_push({
+            "sale_id": sale.id,
+            "amount_paid": amount,
+            "phone_number": payload.phone_number
+        })
+
+        print("STK PUSH RESPONSE:", response, flush=True)
+
+        if response.get("ResponseCode") != "0":
+            raise HTTPException(
+                status_code=400,
+                detail=response.get("ResponseDescription", "STK Push failed")
+            )
+
+        if not response.get("MerchantRequestID") or not response.get("CheckoutRequestID"):
+            raise HTTPException(
+                status_code=400,
+                detail="Safaricom did not return request IDs"
+            )
+
+        new_payment = Payment(
+            sale_id=sale.id,
+            amount_paid=amount,
+            phone_number=payload.phone_number,
+            mrid=response["MerchantRequestID"],
+            crid=response["CheckoutRequestID"],
+            payment_status="pending"
         )
-    return payment
 
-# End payments routes
+        db.add(new_payment)
+        db.commit()
+        db.refresh(new_payment)
+
+        print("PAYMENT CREATED:", new_payment.id, flush=True)
+
+        return {
+            "message": "STK Push initiated successfully",
+            "payment_id": new_payment.id,
+            "sale_id": sale.id,
+            "MerchantRequestID": new_payment.mrid,
+            "CheckoutRequestID": new_payment.crid,
+            "payment_status": new_payment.payment_status
+        }
+
+    except HTTPException:
+        db.rollback()
+        raise
+
+    except Exception as e:
+        db.rollback()
+        print("STK PUSH ERROR:", repr(e), flush=True)
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
+
+# M-Pesa callback route
+
+@app.post("/saf-callback")
+def saf_callback(
+    callback: dict,
+    db: Session = Depends(get_db)
+):
+    try:
+        stk_callback = callback.get("Body", {}).get("stkCallback", {})
+
+        checkout_request_id = stk_callback.get("CheckoutRequestID")
+        result_code = stk_callback.get("ResultCode")
+        result_desc = stk_callback.get("ResultDesc")
+
+        if not checkout_request_id:
+            return {"Result": "Missing CheckoutRequestID"}
+
+        payment = db.scalars(
+            select(Payment).where(
+                Payment.crid == checkout_request_id
+            )
+        ).first()
+
+        if not payment:
+            return {"Result": "Payment not found"}
+
+        if result_code == 0:
+            metadata = stk_callback.get("CallbackMetadata", {}).get("Item", [])
+
+            transaction_code = None
+            callback_amount = None
+            phone_number = None
+
+            for item in metadata:
+                if item.get("Name") == "MpesaReceiptNumber":
+                    transaction_code = item.get("Value")
+
+                elif item.get("Name") == "Amount":
+                    callback_amount = item.get("Value")
+
+                elif item.get("Name") == "PhoneNumber":
+                    phone_number = item.get("Value")
+
+            if not transaction_code:
+                return {"Result": "Transaction receipt missing"}
+
+            payment.transaction_code = transaction_code
+            payment.payment_status = "completed"
+
+            if callback_amount is not None:
+                payment.amount_paid = callback_amount
+
+            if phone_number is not None:
+                payment.phone_number = str(phone_number)
+
+            db.commit()
+            db.refresh(payment)
+
+            print("PAYMENT UPDATED:", payment.transaction_code, flush=True)
+
+            try:
+                sale = db.get(Sale, payment.sale_id)
+                user = db.get(User, sale.user_id) if sale else None
+
+                receipt_text = (
+                    "DUKA PAYMENT RECEIPT\n\n"
+                    f"Sale ID: {payment.sale_id}\n"
+                    f"Transaction Code: {payment.transaction_code}\n"
+                    f"Amount Paid: KSh {payment.amount_paid}\n"
+                    f"Phone Number: {payment.phone_number}\n"
+                    f"Payment Status: {payment.payment_status}"
+                )
+
+                if user:
+                    receipt_url = create_pdf(
+                        receipt_text,
+                        payment.transaction_code,
+                        user.email
+                    )
+                    print("RECEIPT URL:", receipt_url, flush=True)
+
+            except Exception as e:
+                print("RECEIPT ERROR:", str(e), flush=True)
+
+            return {"Result": "Payment completed successfully"}
+
+        else:
+            payment.payment_status = "failed"
+            db.commit()
+
+            print("PAYMENT FAILED:", result_desc, flush=True)
+
+            return {
+                "Result": "Payment failed",
+                "Description": result_desc
+            }
+
+    except Exception as e:
+        db.rollback()
+        print("CALLBACK ERROR:", repr(e), flush=True)
+
+        return {"Result": "Callback processing error"}

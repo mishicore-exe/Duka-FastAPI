@@ -1,32 +1,48 @@
-import cloudinary 
+import cloudinary
 import cloudinary.uploader
+import os
+from dotenv import load_dotenv
 from send_email import email
 
-Cloud_Name="ajklkyxy"
-Api_Key="496387888836798"
-Secret_Key="8hXaQlqJSz3HqXqrlIWu0WfnTDk"
+load_dotenv()
 
-# connecting to cloudinary
 cloudinary.config(
-    cloud_name=Cloud_Name,
-    api_key=Api_Key,
-    api_secret=Secret_Key
+    cloud_name=os.getenv("CLOUDINARY_CLOUD_NAME"),
+    api_key=os.getenv("CLOUDINARY_API_KEY"),
+    api_secret=os.getenv("CLOUDINARY_API_SECRET")
 )
-print("cloudinary configuration successful")
 
-def upload_pdf(pdf_file):
+print("Cloudinary configuration successful")
+
+def upload_pdf(transaction_code, customer_email=None):
     try:
-        file_path = f"receipts/{pdf_file}.pdf"
-        # upload pdf
-        upload = cloudinary.uploader.upload(file_path, resource_type="raw")
+        file_path = f"receipts/{transaction_code}.pdf"
+
+        if not os.path.exists(file_path):
+            raise FileNotFoundError("Receipt PDF not found")
+
+        upload = cloudinary.uploader.upload(
+            file_path,
+            resource_type="raw"
+        )
+
         receipt_url = upload["secure_url"]
 
-        print("successful cloudinary upload") 
+        print("Successful Cloudinary upload")
         print(receipt_url)
-        # send email
-        email("mitchellewanjohi69@gmail.com","Successful Payment",f"Thankyou,we have rceived your payment.\n\n"f"Receipt:{receipt_url}")
-        return "success"
+
+        if customer_email:
+            try:
+                email(
+                    customer_email,
+                    "Successful Payment",
+                    f"Thank you, we have received your payment.\n\nReceipt: {receipt_url}"
+                )
+            except Exception as e:
+                print("EMAIL ERROR:", str(e))
+
+        return receipt_url
 
     except Exception as e:
-        print(f"upload failed: {e}")
-        return "failed"
+        print("Upload failed:", str(e))
+        return None

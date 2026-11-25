@@ -1,19 +1,24 @@
-import mailtrap
+import os,mailtrap
 
-token="fdf92a477ae866bf54e396effeb9c72a"
+token = os.getenv("MAILTRAP_TOKEN")
 
-def email(to,subject,message):
-    mail=mailtrap.Mail(
-        sender=mailtrap.Address(email="hello@demomailtrap.co",name="FLASK_API"),
+def email(to, subject, message):
+    if not token:
+        raise ValueError("Mailtrap token is missing")
+
+    mail = mailtrap.Mail(
+        sender=mailtrap.Address(
+            email="hello@demomailtrap.co",
+            name="DUKA"
+        ),
         to=[mailtrap.Address(email=to)],
         subject=subject,
         text=message,
-        category="mailtrap integration test"
+        category="Payment Confirmation"
     )
-    client=mailtrap.MailtrapClient(token=token)
-    response=client.send(mail)
 
-    print("this is mailtrap------------------------------------------")
-    print(response)
+    client = mailtrap.MailtrapClient(token=token)
+    response = client.send(mail)
 
-# email("mitchellewanjohi69@gmail.com","Testing API","testing my API")
+    print("Mailtrap response:", response)
+    return response

@@ -1,14 +1,15 @@
-import requests, base64, math
+import requests,base64,math,os
 from datetime import datetime
 from requests.auth import HTTPBasicAuth
 
-consumer_key="ckAK19A0jYFkWhxYiH1ONurQX5lu4bKAtLkhdPutAK8ZAD9m"
-consumer_secret="bijvRv3Oq4XYarTza9wHu2HX0aKtG1D06yD7OHldexOqGK3YNQHWKFbLlqYqGipU"
-saf_api_url="https://sandbox.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials"
-saf_short_code="174379"
-saf_pass_key="bfb279f9aa9bdbcf158e97dd71a467cd2e0c893059b10f78e6b72ada1ed2c919"
-saf_stkpush_api="https://sandbox.safaricom.co.ke/mpesa/stkpush/v1/processrequest"
-my_callback_url="https://clump-bovine-reiterate.ngrok-free.dev/saf-callback"
+consumer_key = os.getenv("MPESA_CONSUMER_KEY")
+consumer_secret = os.getenv("MPESA_CONSUMER_SECRET")
+
+saf_api_url = "https://sandbox.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials"
+saf_short_code = "174379"
+saf_pass_key = "bfb279f9aa9bdbcf158e97dd71a467cd2e0c893059b10f78e6b72ada1ed2c919"
+saf_stkpush_api = "https://sandbox.safaricom.co.ke/mpesa/stkpush/v1/processrequest"
+my_callback_url = "https://clump-bovine-reiterate.ngrok-free.dev/saf-callback"
 
 def generate_password_and_timestamp():
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
@@ -22,31 +23,38 @@ def get_mpesa_access_token():
         res = requests.get(
             saf_api_url,
             auth=HTTPBasicAuth(consumer_key, consumer_secret),
+            timeout=30
         )
-        return res.json()['access_token']
+        res.raise_for_status()
+        return res.json()["access_token"]
+
     except Exception as e:
-        print(str(e), "error getting access token")
-        raise e
+        print("Error getting M-Pesa access token:", str(e))
+        raise
 
 def make_stk_push(payload):
-    amount = payload['amount_paid']
-    phone_number = str(payload['phone_number']).strip()
-    sale_id = payload.get('sale_id')
+    amount = payload["amount_paid"]
+    phone_number = str(payload["phone_number"]).strip()
+    sale_id = payload.get("sale_id")
 
-    # Convert Kenyan phone number to Safaricom format
-    if phone_number.startswith('+254'):
+    if phone_number.startswith("+254"):
         phone_number = phone_number[1:]
-    elif phone_number.startswith('0'):
-        phone_number = '254' + phone_number[1:]
+    elif phone_number.startswith("0"):
+        phone_number = "254" + phone_number[1:]
 
-    if not phone_number.isdigit() or len(phone_number) != 12 or not phone_number.startswith('254'):
+    if not phone_number.isdigit() or len(phone_number) != 12 or not phone_number.startswith("254"):
         raise ValueError("Enter a valid Kenyan phone number, e.g. 0712345678")
 
+    if not consumer_key or not consumer_secret or not saf_pass_key or not my_callback_url:
+        raise ValueError("M-Pesa credentials or callback URL are missing")
+
     token = get_mpesa_access_token()
+
     headers = {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json"
     }
+
     password, timestamp = generate_password_and_timestamp()
 
     push_data = {
@@ -60,7 +68,7 @@ def make_stk_push(payload):
         "PhoneNumber": phone_number,
         "CallBackURL": my_callback_url,
         "AccountReference": str(sale_id),
-        "TransactionDesc": "description of the transaction"
+        "TransactionDesc": "Duka Sale Payment"
     }
 
     response = requests.post(
@@ -73,9 +81,12 @@ def make_stk_push(payload):
     try:
         response_data = response.json()
     except ValueError:
-        raise ValueError(f"Safaricom returned an invalid response: {response.text}")
+        raise ValueError(f"Invalid Safaricom response: {response.text}")
 
     print("Safaricom HTTP status:", response.status_code)
     print("Safaricom response:", response_data)
+
+    if response.status_code != 200:
+        raise ValueError(response_data.get("errorMessage", "M-Pesa request failed"))
 
     return response_data
